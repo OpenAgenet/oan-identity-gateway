@@ -48,3 +48,6 @@ A buildable development framework is now present. This is not yet a production i
 ## License
 
 This repository is licensed under `Apache-2.0` to support OAN ecosystem adoption.
+
+
+Community Skill identity verification does not require this component. It uses the local Runtime/SDK workflow to exchange public challenge messages. This component retains its protocol/network enforcement role; its presence alone does not implement mutual authentication. Dedicated Hermes/OpenClaw plugins are not prerequisites for their compatible Skill-based path.
