@@ -1,0 +1,8 @@
+{
+  "runtimeEndpoint": "pipe:oan-identity-runtime",
+  "routes": [{
+    "tenantId": "example-tenant",
+    "resourceDid": "did:oan:K7mQ9:11111111111111111111111111111111",
+    "destination": "https://agent.example.invalid"
+  }]
+}

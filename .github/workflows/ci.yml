@@ -1,0 +1,25 @@
+name: CI
+on: [push, pull_request]
+jobs:
+  check:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: app
+      - uses: actions/checkout@v4
+        with:
+          repository: wolfbrother/oan-protocol-common
+          path: oan-protocol-common
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - run: cargo fmt --check
+        working-directory: app
+      - run: cargo test --locked
+        working-directory: app
+      - run: cargo clippy --locked --all-targets --no-deps -- -D warnings
+        working-directory: app
