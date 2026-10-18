@@ -23,6 +23,12 @@ pub struct VerifiedRuntimeContext {
     pub request_id: String,
     pub payload_digest: String,
     #[serde(default)]
+    pub caller_id: Option<String>,
+    #[serde(default)]
+    pub tenant_id: Option<String>,
+    #[serde(default)]
+    pub callback_did: Option<String>,
+    #[serde(default)]
     pub delegation_digest: Option<String>,
     #[serde(default)]
     pub delegation_verified: bool,
@@ -205,6 +211,8 @@ impl<T: RuntimeIpcTransport> AuthenticatedRuntimeConnector<T> {
         if response.version != IPC_VERSION
             || response.caller_id != self.caller_id
             || response.tenant_id != self.tenant_id
+            || response.context.caller_id.as_deref() != Some(response.caller_id.as_str())
+            || response.context.tenant_id != response.tenant_id
             || response.context.audience_did != audience
             || response.context.request_id != request_id
             || response.context.payload_digest != payload_digest
@@ -243,7 +251,7 @@ impl<T: RuntimeIpcTransport> AuthenticatedRuntimeConnector<T> {
     }
 }
 
-fn input_digest(
+pub fn input_digest(
     envelope: &Value,
     audience: &str,
     request_id: &str,

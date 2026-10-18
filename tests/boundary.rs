@@ -7,8 +7,18 @@ use oan_identity_gateway::{
     config::Config,
     envelope::{response_signing_intent, VerifiedProxyEnvelope},
     require_delegation,
+    runtime_connector::{AuthenticatedRuntimeConnector, RuntimeIpcTransport, IPC_VERSION},
 };
 use serde_json::Value;
+
+struct IpcEcho {
+    response: Vec<u8>,
+}
+impl RuntimeIpcTransport for IpcEcho {
+    async fn round_trip(&self, _frame: Vec<u8>) -> Result<Vec<u8>, String> {
+        Ok(self.response.clone())
+    }
+}
 #[test]
 fn tenant_routes_cannot_cross_boundaries() {
     let config: Config = serde_json::from_str(include_str!("../examples/config.json")).unwrap();
@@ -76,5 +86,72 @@ fn response_intent_binds_original_proxy_target_tenant_and_request_digest() {
     assert_eq!(
         intent["delegationDigest"],
         Value::String("sha256:delegation".into())
+    );
+}
+
+#[test]
+fn response_intent_is_a_complete_gateway_response_binding() {
+    let request = VerifiedProxyEnvelope {
+        original_caller_did: "did:oan:HmxwA:caller1111111111111111111111111111111".into(),
+        proxy_did: "did:oan:HmxwA:proxy11111111111111111111111111111111".into(),
+        target_resource_did: "did:oan:HmxwA:target111111111111111111111111111111".into(),
+        tenant_id: "tenant-b".into(),
+        request_id: "request-7".into(),
+        payload_digest: "sha256:request-7".into(),
+        delegation_digest: None,
+    };
+    let intent = response_signing_intent(&request, 202, "sha256:response-7");
+    assert_eq!(intent["kind"], Value::String("gateway-response".into()));
+    assert_eq!(
+        intent["audienceDid"],
+        Value::String(request.original_caller_did.clone())
+    );
+    assert_eq!(intent["requestId"], Value::String("request-7".into()));
+    assert_eq!(intent["status"], Value::from(202));
+    assert!(intent["delegationDigest"].is_null());
+    assert_ne!(intent["payloadDigest"], intent["requestPayloadDigest"]);
+}
+
+#[tokio::test]
+async fn authenticated_ipc_rejects_nested_principal_substitution() {
+    let envelope =
+        serde_json::json!({"subjectDid":"did:oan:HmxwA:caller1111111111111111111111111111111"});
+    let audience = "did:oan:HmxwA:target111111111111111111111111111111";
+    let request_id = "request-nested-principal";
+    let payload_digest = "sha256:nested-principal";
+    let input_digest = oan_identity_gateway::runtime_connector::input_digest(
+        &envelope,
+        audience,
+        request_id,
+        payload_digest,
+    );
+    let response = serde_json::to_vec(&serde_json::json!({
+        "version": IPC_VERSION,
+        "callerId": "process-a",
+        "tenantId": "tenant-a",
+        "context": {
+            "subjectDid": envelope["subjectDid"],
+            "audienceDid": audience,
+            "requestId": request_id,
+            "payloadDigest": payload_digest,
+            "callerId": "forged-process",
+            "tenantId": "tenant-a"
+        },
+        "inputDigest": input_digest
+    }))
+    .unwrap();
+    let connector = AuthenticatedRuntimeConnector::new(
+        IpcEcho { response },
+        "b".repeat(32),
+        "process-a".into(),
+        Some("tenant-a".into()),
+    )
+    .unwrap();
+    assert_eq!(
+        connector
+            .verify_authenticated(&envelope, audience, request_id, payload_digest)
+            .await
+            .unwrap_err(),
+        "ipc_result_binding_mismatch"
     );
 }
