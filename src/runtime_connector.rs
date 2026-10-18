@@ -112,7 +112,7 @@ pub struct UnixRuntimeTransport {
 impl RuntimeIpcTransport for UnixRuntimeTransport {
     #[cfg(unix)]
     async fn round_trip(&self, frame: Vec<u8>) -> Result<Vec<u8>, String> {
-        use std::os::unix::fs::MetadataExt;
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
         let metadata = std::fs::metadata(&self.path).map_err(|_| "runtime_ipc_unavailable")?;
         if metadata.permissions().mode() & 0o077 != 0 {
             return Err("runtime_ipc_acl_invalid".into());
