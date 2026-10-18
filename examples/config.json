@@ -1,5 +1,7 @@
 {
   "runtimeEndpoint": "pipe:oan-identity-runtime",
+  "gatewayDid": "did:oan:K7mQ9:11111111111111111111111111111111",
+  "allowLoopbackHttp": false,
   "routes": [{
     "tenantId": "example-tenant",
     "resourceDid": "did:oan:K7mQ9:11111111111111111111111111111111",

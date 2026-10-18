@@ -25,6 +25,13 @@ fn gw_01_current_gateway_rejects_actual_http_lab_destinations() {
             .any(|s| s["serviceEndpoint"] == destination));
         let config = Config {
             runtime_endpoint: "unix:/tmp/oan-lab-runtime.sock".into(),
+            gateway_did: None,
+            ingress_bind: None,
+            runtime_bearer: None,
+            backend_auth_token: None,
+            caller_id: None,
+            runtime_owner_uid: Some(0),
+            allow_loopback_http: false,
             routes: vec![TenantRoute {
                 tenant_id: name.into(),
                 resource_did: actor["did"].as_str().unwrap().into(),
@@ -42,6 +49,13 @@ fn https_config() -> Config {
     let m = manifest();
     Config {
         runtime_endpoint: "unix:/tmp/oan-lab-runtime.sock".into(),
+        gateway_did: None,
+        ingress_bind: None,
+        runtime_bearer: None,
+        backend_auth_token: None,
+        caller_id: None,
+        runtime_owner_uid: Some(0),
+        allow_loopback_http: false,
         routes: resource_names()
             .into_iter()
             .enumerate()
@@ -100,14 +114,10 @@ async fn gw_04_claimed_proxy_or_controller_identity_never_grants_delegation() {
     let m = manifest();
     assert!(require_delegation().is_err());
     assert!(UnavailableRuntime.verify_request(&json!({"originalCallerDid":m["resources"]["hermes-a"]["did"],"proxyDid":m["controllers"]["controller-b"]["did"],"claimedVerified":true}),m["resources"]["mcp"]["did"].as_str().unwrap(),"request","sha256:test-only").await.is_err());
-    for capability in [
-        "networkServer",
-        "runtimeConnector",
-        "delegationVerification",
-        "remoteSigner",
-    ] {
-        assert_eq!(capabilities()[capability], false);
-    }
+    assert_eq!(capabilities()["networkServer"], true);
+    assert_eq!(capabilities()["runtimeConnector"], true);
+    assert_eq!(capabilities()["delegationVerification"], true);
+    assert_eq!(capabilities()["remoteSigner"], false);
 }
 #[test]
 #[ignore = "BLOCKED: explicit reviewed local HTTP policy or real TLS ingress, network server and Runtime IPC required"]
