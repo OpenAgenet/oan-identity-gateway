@@ -8,7 +8,7 @@
 
 use crate::{
     config::Config,
-    envelope::VerifiedProxyEnvelope,
+    envelope::{response_signing_intent, VerifiedProxyEnvelope},
     runtime_connector::{AuthenticatedRuntimeConnector, UnixRuntimeTransport},
     verify_verified_delegation,
 };
@@ -201,13 +201,7 @@ async fn handle(
         .to_owned();
     let bytes = response.bytes().await.map_err(|_| "backend_read_failed")?;
     let response_digest = format!("sha256:{:x}", sha2::Sha256::digest(&bytes));
-    let response_intent = serde_json::json!({
-        "kind": "gateway-response",
-        "requestId": verified.request_id,
-        "audienceDid": verified.original_caller_did,
-        "status": status.as_u16(),
-        "payloadDigest": response_digest,
-    });
+    let response_intent = response_signing_intent(&verified, status.as_u16(), &response_digest);
     let signed_response = connector
         .sign_authenticated(&response_intent)
         .await

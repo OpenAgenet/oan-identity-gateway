@@ -5,6 +5,7 @@
 
 use oan_protocol::identity_runtime::IdentityMessageContext;
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 /// Unverified declaration, to be carried in an existing signed envelope body.
 /// No constructor or deserializer confers authentication or delegation authority.
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -29,4 +30,28 @@ pub struct VerifiedProxyEnvelope {
     pub request_id: String,
     pub payload_digest: String,
     pub delegation_digest: Option<String>,
+}
+
+/// Build the exact response intent that is handed to Runtime for signing.
+/// Every identity and correlation field from the verified request is carried
+/// into the proof so a response cannot be detached from its caller, proxy,
+/// target, tenant or delegated scope.
+pub fn response_signing_intent(
+    request: &VerifiedProxyEnvelope,
+    status: u16,
+    response_digest: &str,
+) -> Value {
+    json!({
+        "kind": "gateway-response",
+        "requestId": request.request_id,
+        "requestPayloadDigest": request.payload_digest,
+        "payloadDigest": response_digest,
+        "audienceDid": request.original_caller_did,
+        "originalCallerDid": request.original_caller_did,
+        "proxyDid": request.proxy_did,
+        "targetResourceDid": request.target_resource_did,
+        "tenantId": request.tenant_id,
+        "delegationDigest": request.delegation_digest,
+        "status": status,
+    })
 }
