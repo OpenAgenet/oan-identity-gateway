@@ -116,7 +116,11 @@ async fn gw_04_claimed_proxy_or_controller_identity_never_grants_delegation() {
     assert!(UnavailableRuntime.verify_request(&json!({"originalCallerDid":m["resources"]["hermes-a"]["did"],"proxyDid":m["controllers"]["controller-b"]["did"],"claimedVerified":true}),m["resources"]["mcp"]["did"].as_str().unwrap(),"request","sha256:test-only").await.is_err());
     assert_eq!(capabilities()["networkServer"], true);
     assert_eq!(capabilities()["runtimeConnector"], true);
-    assert_eq!(capabilities()["delegationVerification"], true);
+    assert_eq!(
+        capabilities()["delegationVerification"],
+        "runtime-evidence-required"
+    );
+    assert_eq!(capabilities()["responseBinding"], true);
     assert_eq!(capabilities()["remoteSigner"], false);
 }
 #[test]
