@@ -10,7 +10,7 @@ use crate::{
     config::Config,
     envelope::VerifiedProxyEnvelope,
     runtime_connector::{AuthenticatedRuntimeConnector, UnixRuntimeTransport},
-    verify_delegation,
+    verify_verified_delegation,
 };
 use base64::Engine;
 use serde_json::Value;
@@ -118,8 +118,23 @@ async fn handle(
         .gateway_did
         .as_deref()
         .ok_or("gateway_did_required")?;
-    verify_delegation(&context.subject_did, proxy_did, target_did)
+    // Ordinary forwarding preserves the original end-to-end signed caller and
+    // does not require a delegation. If a delegation artifact is supplied,
+    // however, it must be Runtime-verified before the Gateway accepts it.
+    if envelope
+        .get("delegationDigest")
+        .and_then(Value::as_str)
+        .is_some()
+    {
+        verify_verified_delegation(
+            &context.subject_did,
+            proxy_did,
+            target_did,
+            context.delegation_verified,
+            context.delegation_digest.as_deref(),
+        )
         .map_err(|_| "delegation_verification_failed")?;
+    }
     let verified = VerifiedProxyEnvelope {
         original_caller_did: context.subject_did.clone(),
         proxy_did: proxy_did.to_owned(),
@@ -158,6 +173,24 @@ async fn handle(
         .header("x-oan-sidecar-token", backend_token)
         .header("x-oan-verified-principal", context.subject_did)
         .header("x-oan-request-id", request_id);
+    // Preserve only protocol semantics that are safe to forward. Identity,
+    // proxy and forwarding headers are constructed above and must never be
+    // inherited from the untrusted caller.
+    for (name, value) in &headers {
+        let allowed = matches!(
+            name.as_str(),
+            "content-type"
+                | "accept"
+                | "a2a-version"
+                | "mcp-protocol-version"
+                | "mcp-session-id"
+                | "last-event-id"
+                | "cache-control"
+        );
+        if allowed {
+            request = request.header(name, value);
+        }
+    }
     let response = request.send().await.map_err(|_| "backend_unavailable")?;
     let status = response.status();
     let content_type = response
@@ -167,7 +200,21 @@ async fn handle(
         .unwrap_or("application/octet-stream")
         .to_owned();
     let bytes = response.bytes().await.map_err(|_| "backend_read_failed")?;
-    let head = format!("HTTP/1.1 {}\r\nContent-Length: {}\r\nContent-Type: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n", status.as_u16(), bytes.len(), content_type);
+    let response_digest = format!("sha256:{:x}", sha2::Sha256::digest(&bytes));
+    let response_intent = serde_json::json!({
+        "kind": "gateway-response",
+        "requestId": verified.request_id,
+        "audienceDid": verified.original_caller_did,
+        "status": status.as_u16(),
+        "payloadDigest": response_digest,
+    });
+    let signed_response = connector
+        .sign_authenticated(&response_intent)
+        .await
+        .map_err(|_| "response_signing_failed")?;
+    let encoded_response = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .encode(serde_json::to_vec(&signed_response).map_err(|_| "response_signing_failed")?);
+    let head = format!("HTTP/1.1 {}\r\nContent-Length: {}\r\nContent-Type: {}\r\nX-OAN-Response-Envelope: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n", status.as_u16(), bytes.len(), content_type, encoded_response);
     socket
         .write_all(head.as_bytes())
         .await

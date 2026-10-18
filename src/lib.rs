@@ -37,10 +37,25 @@ pub fn verify_delegation(
     }
     Ok(())
 }
+/// A forwarding chain is accepted only when Runtime has verified an explicit
+/// delegation artifact. A DID-shaped proxy declaration alone is never enough.
+pub fn verify_verified_delegation(
+    original_caller_did: &str,
+    proxy_did: &str,
+    target_resource_did: &str,
+    delegation_verified: bool,
+    delegation_digest: Option<&str>,
+) -> Result<(), GatewayError> {
+    verify_delegation(original_caller_did, proxy_did, target_resource_did)?;
+    if !delegation_verified || delegation_digest.filter(|v| !v.is_empty()).is_none() {
+        return Err(GatewayError::DelegationUnsupported);
+    }
+    Ok(())
+}
 /// Compatibility guard for callers that have not supplied a verified chain.
 pub fn require_delegation() -> Result<(), GatewayError> {
     Err(GatewayError::DelegationUnsupported)
 }
 pub fn capabilities() -> Value {
-    json!({"stage":"protected-gateway", "networkServer":true, "runtimeConnector":true, "delegationVerification":true, "remoteSigner":false, "redirects":"disabled", "tenantIsolation":true})
+    json!({"stage":"protected-gateway", "networkServer":true, "runtimeConnector":true, "delegationVerification":"runtime-evidence-required", "responseBinding":true, "remoteSigner":false, "redirects":"disabled", "tenantIsolation":true})
 }

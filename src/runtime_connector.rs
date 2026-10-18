@@ -22,6 +22,12 @@ pub struct VerifiedRuntimeContext {
     pub audience_did: String,
     pub request_id: String,
     pub payload_digest: String,
+    #[serde(default)]
+    pub delegation_digest: Option<String>,
+    #[serde(default)]
+    pub delegation_verified: bool,
+    #[serde(default)]
+    pub response_signing_supported: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -44,6 +50,25 @@ pub struct IpcVerifiedContext {
     pub caller_id: String,
     pub tenant_id: Option<String>,
     pub context: VerifiedRuntimeContext,
+    pub input_digest: String,
+}
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct IpcSignRequest {
+    pub version: String,
+    pub operation: String,
+    pub bearer: String,
+    pub intent: Value,
+    pub expected_caller_id: String,
+    pub expected_tenant_id: Option<String>,
+}
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct IpcSignedResult {
+    pub version: String,
+    pub caller_id: String,
+    pub tenant_id: Option<String>,
+    pub signed: Value,
     pub input_digest: String,
 }
 
@@ -189,6 +214,33 @@ impl<T: RuntimeIpcTransport> AuthenticatedRuntimeConnector<T> {
         }
         Ok(response.context)
     }
+
+    pub async fn sign_authenticated(&self, intent: &Value) -> Result<Value, String> {
+        let req = IpcSignRequest {
+            version: IPC_VERSION.into(),
+            operation: "sign_request".into(),
+            bearer: self.bearer.clone(),
+            intent: intent.clone(),
+            expected_caller_id: self.caller_id.clone(),
+            expected_tenant_id: self.tenant_id.clone(),
+        };
+        let frame = serde_json::to_vec(&req).map_err(|_| "ipc_schema_invalid")?;
+        if frame.len() > MAX_FRAME_BYTES {
+            return Err("ipc_frame_too_large".into());
+        }
+        let raw = self.transport.round_trip(frame).await?;
+        let response: IpcSignedResult =
+            serde_json::from_slice(&raw).map_err(|_| "ipc_schema_invalid")?;
+        if response.version != IPC_VERSION
+            || response.caller_id != self.caller_id
+            || response.tenant_id != self.tenant_id
+            || response.input_digest
+                != sign_input_digest(intent, &self.caller_id, self.tenant_id.as_deref())
+        {
+            return Err("ipc_result_binding_mismatch".into());
+        }
+        Ok(response.signed)
+    }
 }
 
 fn input_digest(
@@ -198,6 +250,13 @@ fn input_digest(
     payload_digest: &str,
 ) -> String {
     let value = serde_json::json!({"envelope": envelope, "audience": audience, "requestId": request_id, "payloadDigest": payload_digest});
+    format!(
+        "sha256:{:x}",
+        sha2::Sha256::digest(canonical_json(&value).as_bytes())
+    )
+}
+fn sign_input_digest(intent: &Value, caller_id: &str, tenant_id: Option<&str>) -> String {
+    let value = serde_json::json!({"intent": intent, "callerId": caller_id, "tenantId": tenant_id});
     format!(
         "sha256:{:x}",
         sha2::Sha256::digest(canonical_json(&value).as_bytes())
