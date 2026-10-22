@@ -52,6 +52,11 @@ ID, and keep the bearer in trusted process
 configuration. The Windows pipe round-trip is covered by a native test; complete
 cross-host A2A/MCP business composition remains an integration task.
 
+For a Windows cross-language IPC check, build the sibling Runtime with
+`npm --prefix ../oan-identity-runtime run build`, then run
+`cargo test --test windows_pipe -- --include-ignored`. This starts a local
+Node Runtime test listener and checks the real Gateway connector against it.
+
 A buildable development framework is now present. This is not yet a production identity service or a complete mutual-authentication implementation. Detailed design, development planning, and framework reviews are maintained separately in `oan-design-docs`. Source code uses English by default.
 
 ## License

@@ -84,15 +84,10 @@ async fn handle(
         .get("targetResourceDid")
         .and_then(Value::as_str)
         .ok_or("target_resource_missing")?;
-    let route = config
-        .route(
-            envelope
-                .get("tenantId")
-                .and_then(Value::as_str)
-                .ok_or("tenant_missing")?,
-            target_did,
-        )
-        .map_err(|_| "tenant_route_denied")?;
+    let claimed_tenant = envelope
+        .get("tenantId")
+        .and_then(Value::as_str)
+        .ok_or("tenant_missing")?;
     let connector = AuthenticatedRuntimeConnector::new(
         local_runtime_transport(
             &config.runtime_endpoint,
@@ -101,16 +96,18 @@ async fn handle(
         )?,
         bearer,
         caller_id.clone(),
-        envelope
-            .get("tenantId")
-            .and_then(Value::as_str)
-            .map(str::to_owned),
+        Some(claimed_tenant.to_owned()),
     )
     .map_err(|_| "runtime_credentials_invalid")?;
     let context = connector
         .verify_authenticated(&envelope, target_did, &request_id, &payload_digest)
         .await
         .map_err(|_| "runtime_verification_failed")?;
+    // Only the authenticated Runtime response may select a tenant route.
+    let authenticated_tenant = context.tenant_id.as_deref().ok_or("tenant_missing")?;
+    let route = config
+        .route(authenticated_tenant, target_did)
+        .map_err(|_| "tenant_route_denied")?;
     let proxy_did = config
         .gateway_did
         .as_deref()
@@ -123,6 +120,11 @@ async fn handle(
         .and_then(Value::as_str)
         .is_some()
     {
+        if context.delegation_digest.as_deref()
+            != envelope.get("delegationDigest").and_then(Value::as_str)
+        {
+            return Err("delegation_verification_failed".into());
+        }
         verify_verified_delegation(
             &context.subject_did,
             proxy_did,
@@ -136,11 +138,7 @@ async fn handle(
         original_caller_did: context.subject_did.clone(),
         proxy_did: proxy_did.to_owned(),
         target_resource_did: target_did.to_owned(),
-        tenant_id: envelope
-            .get("tenantId")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_owned(),
+        tenant_id: authenticated_tenant.to_owned(),
         request_id: request_id.clone(),
         payload_digest: payload_digest.clone(),
         delegation_digest: envelope
@@ -264,10 +262,15 @@ async fn read_request(
             return Err("duplicate_header".into());
         }
     }
-    let length = headers
-        .get("content-length")
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(0usize);
+    if headers.contains_key("transfer-encoding") {
+        return Err("unsupported_transfer_encoding".into());
+    }
+    let length = match headers.get("content-length") {
+        Some(value) => value
+            .parse::<usize>()
+            .map_err(|_| "invalid_content_length")?,
+        None => 0,
+    };
     if header_end + length > MAX_REQUEST {
         return Err("request_too_large".into());
     };
