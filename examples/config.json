@@ -1,5 +1,6 @@
 {
-  "runtimeEndpoint": "pipe:oan-identity-runtime",
+  "runtimeEndpoint": "pipe:\\\\.\\pipe\\oan-identity-runtime",
+  "runtimeOwnerPid": 1,
   "gatewayDid": "did:oan:K7mQ9:11111111111111111111111111111111",
   "allowLoopbackHttp": false,
   "routes": [{

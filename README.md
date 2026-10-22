@@ -43,6 +43,15 @@ The network proxy layer may draw on ANP Proxy Gateway/Receiver, fragmentation, a
 
 ## Development status
 
+The protected HTTP `serve` path now selects Unix socket IPC on Ubuntu or an
+absolute Windows named pipe (`pipe:\\\\.\\pipe\\<name>`) on Windows. The Runtime
+owns the pipe listener, bearer authorization and verification policy; Gateway
+does not accept a peer-supplied identity or signing key. Configure the Runtime
+listener with owner-only pipe access, set `runtimeOwnerPid` to its actual process
+ID, and keep the bearer in trusted process
+configuration. The Windows pipe round-trip is covered by a native test; complete
+cross-host A2A/MCP business composition remains an integration task.
+
 A buildable development framework is now present. This is not yet a production identity service or a complete mutual-authentication implementation. Detailed design, development planning, and framework reviews are maintained separately in `oan-design-docs`. Source code uses English by default.
 
 ## License

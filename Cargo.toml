@@ -18,6 +18,7 @@ sha2 = "0.10"
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "stream"] }
 futures-util = "0.3"
 tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "net", "io-util", "time"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Pipes"] }
 oan-protocol = { path = "../oan-protocol-common/crates/oan-protocol" }
 
 oan-did-oan = { path = "../oan-protocol-common/crates/oan-did-oan" }

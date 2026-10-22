@@ -9,7 +9,7 @@
 use crate::{
     config::Config,
     envelope::{response_signing_intent, VerifiedProxyEnvelope},
-    runtime_connector::{AuthenticatedRuntimeConnector, UnixRuntimeTransport},
+    runtime_connector::{local_runtime_transport, AuthenticatedRuntimeConnector},
     verify_verified_delegation,
 };
 use base64::Engine;
@@ -94,14 +94,11 @@ async fn handle(
         )
         .map_err(|_| "tenant_route_denied")?;
     let connector = AuthenticatedRuntimeConnector::new(
-        UnixRuntimeTransport {
-            path: config
-                .runtime_endpoint
-                .strip_prefix("unix:")
-                .unwrap_or(&config.runtime_endpoint)
-                .to_owned(),
-            owner_uid: config.runtime_owner_uid,
-        },
+        local_runtime_transport(
+            &config.runtime_endpoint,
+            config.runtime_owner_uid,
+            config.runtime_owner_pid,
+        )?,
         bearer,
         caller_id.clone(),
         envelope

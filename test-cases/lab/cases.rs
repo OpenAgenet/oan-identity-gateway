@@ -31,6 +31,7 @@ fn gw_01_current_gateway_rejects_actual_http_lab_destinations() {
             backend_auth_token: None,
             caller_id: None,
             runtime_owner_uid: Some(0),
+            runtime_owner_pid: None,
             allow_loopback_http: false,
             routes: vec![TenantRoute {
                 tenant_id: name.into(),
@@ -55,6 +56,7 @@ fn https_config() -> Config {
         backend_auth_token: None,
         caller_id: None,
         runtime_owner_uid: Some(0),
+        runtime_owner_pid: None,
         allow_loopback_http: false,
         routes: resource_names()
             .into_iter()
