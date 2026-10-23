@@ -155,3 +155,24 @@ async fn authenticated_ipc_rejects_nested_principal_substitution() {
         "ipc_result_binding_mismatch"
     );
 }
+
+#[test]
+fn chained_envelope_forwarding_is_explicit_opt_in() {
+    let source = include_str!("../examples/config.json");
+    let config: Config = serde_json::from_str(source).unwrap();
+    assert!(!config.forward_verified_envelope);
+    let mut value: Value = serde_json::from_str(source).unwrap();
+    value["forwardVerifiedEnvelope"] = Value::Bool(true);
+    let configured: Config = serde_json::from_value(value).unwrap();
+    assert!(configured.forward_verified_envelope);
+    configured.validate().unwrap();
+}
+
+#[test]
+fn outbound_gateway_requires_end_to_end_envelope_forwarding() {
+    let mut config: Config = serde_json::from_str(include_str!("../examples/config.json")).unwrap();
+    config.outbound_passthrough = true;
+    assert!(config.validate().is_err());
+    config.forward_verified_envelope = true;
+    config.validate().unwrap();
+}

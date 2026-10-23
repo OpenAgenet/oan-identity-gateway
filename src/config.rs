@@ -33,9 +33,20 @@ pub struct Config {
     pub runtime_owner_pid: Option<u32>,
     #[serde(default)]
     pub allow_loopback_http: bool,
+    /// Opt-in chain to another independently verifying identity ingress.
+    /// Default forwarding continues to strip the original identity envelope.
+    #[serde(default)]
+    pub forward_verified_envelope: bool,
+    /// Local caller egress: Runtime validates the local sender and the receiver
+    /// retains ownership of the end-to-end response proof.
+    #[serde(default)]
+    pub outbound_passthrough: bool,
 }
 impl Config {
     pub fn validate(&self) -> Result<(), GatewayError> {
+        if self.outbound_passthrough && !self.forward_verified_envelope {
+            return Err(GatewayError::InvalidConfig);
+        }
         if !((self.runtime_endpoint.starts_with("unix:/") && self.runtime_endpoint.len() > 6)
             || (self.runtime_endpoint.starts_with(r"pipe:\\.\pipe\")
                 && self.runtime_endpoint.len() > r"pipe:\\.\pipe\".len()))

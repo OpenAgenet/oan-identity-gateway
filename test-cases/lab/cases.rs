@@ -33,6 +33,8 @@ fn gw_01_current_gateway_rejects_actual_http_lab_destinations() {
             runtime_owner_uid: Some(0),
             runtime_owner_pid: None,
             allow_loopback_http: false,
+            forward_verified_envelope: false,
+            outbound_passthrough: false,
             routes: vec![TenantRoute {
                 tenant_id: name.into(),
                 resource_did: actor["did"].as_str().unwrap().into(),
@@ -58,6 +60,8 @@ fn https_config() -> Config {
         runtime_owner_uid: Some(0),
         runtime_owner_pid: None,
         allow_loopback_http: false,
+        forward_verified_envelope: false,
+        outbound_passthrough: false,
         routes: resource_names()
             .into_iter()
             .enumerate()

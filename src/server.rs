@@ -195,6 +195,12 @@ async fn handle(
         .header("x-oan-sidecar-token", backend_token)
         .header("x-oan-verified-principal", context.subject_did)
         .header("x-oan-request-id", request_id);
+    if config.forward_verified_envelope {
+        // This is the exact envelope verified above, never a caller supplied
+        // principal. The downstream ingress must independently verify it using
+        // its own replay store before dispatching a business handler.
+        request = request.header("x-oan-envelope", encoded);
+    }
     // Preserve only protocol semantics that are safe to forward. Identity,
     // proxy and forwarding headers are constructed above and must never be
     // inherited from the untrusted caller.
@@ -215,6 +221,39 @@ async fn handle(
     }
     let response = request.send().await.map_err(|_| "backend_unavailable")?;
     let status = response.status();
+    if config.outbound_passthrough {
+        // Egress cannot replace the receiver's identity proof with its own.
+        // Preserve the bounded wire body (including terminal SSE proof) and
+        // only the protocol/response-proof headers needed by the native client.
+        let mut head = format!("HTTP/1.1 {}\r\n", status.as_u16());
+        for name in ["content-type", "mcp-session-id", "x-oan-response-envelope"] {
+            if let Some(value) = response.headers().get(name).and_then(|v| v.to_str().ok()) {
+                head.push_str(&format!("{name}: {value}\r\n"));
+            }
+        }
+        let mut bytes = Vec::new();
+        let mut stream = response.bytes_stream();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|_| "backend_read_failed")?;
+            if bytes.len() + chunk.len() > MAX_REQUEST * 4 {
+                return Err("response_too_large".into());
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        head.push_str(&format!(
+            "Content-Length: {}\r\nConnection: close\r\n\r\n",
+            bytes.len()
+        ));
+        socket
+            .write_all(head.as_bytes())
+            .await
+            .map_err(|_| "response_write_failed")?;
+        socket
+            .write_all(&bytes)
+            .await
+            .map_err(|_| "response_write_failed")?;
+        return Ok(());
+    }
     let content_type = response
         .headers()
         .get(reqwest::header::CONTENT_TYPE)
@@ -222,11 +261,17 @@ async fn handle(
         .unwrap_or("application/octet-stream")
         .to_owned();
     let is_stream = content_type.starts_with("text/event-stream");
+    let session_header = response
+        .headers()
+        .get("mcp-session-id")
+        .and_then(|v| v.to_str().ok())
+        .map(|v| format!("Mcp-Session-Id: {v}\r\n"))
+        .unwrap_or_default();
     let mut bytes = Vec::new();
     let mut stream = response.bytes_stream();
     if is_stream {
         *response_started = true;
-        socket.write_all(format!("HTTP/1.1 {}\r\nTransfer-Encoding: chunked\r\nContent-Type: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n", status.as_u16(), content_type).as_bytes()).await.map_err(|_| "response_write_failed")?;
+        socket.write_all(format!("HTTP/1.1 {}\r\nTransfer-Encoding: chunked\r\nContent-Type: {}\r\n{}Cache-Control: no-store\r\nConnection: close\r\n\r\n", status.as_u16(), content_type, session_header).as_bytes()).await.map_err(|_| "response_write_failed")?;
     }
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(|_| "backend_read_failed")?;
@@ -262,7 +307,7 @@ async fn handle(
             .map_err(|_| "response_write_failed")?;
         return Ok(());
     }
-    let head = format!("HTTP/1.1 {}\r\nContent-Length: {}\r\nContent-Type: {}\r\nX-OAN-Response-Envelope: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n", status.as_u16(), bytes.len(), content_type, encoded_response);
+    let head = format!("HTTP/1.1 {}\r\nContent-Length: {}\r\nContent-Type: {}\r\n{}X-OAN-Response-Envelope: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n", status.as_u16(), bytes.len(), content_type, session_header, encoded_response);
     socket
         .write_all(head.as_bytes())
         .await
