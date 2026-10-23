@@ -102,7 +102,10 @@ async fn handle(
     let context = connector
         .verify_authenticated(&envelope, target_did, &request_id, &payload_digest)
         .await
-        .map_err(|_| "runtime_verification_failed")?;
+        .map_err(|error| {
+            eprintln!("Runtime request verification failed: {error}");
+            "runtime_verification_failed"
+        })?;
     // Only the authenticated Runtime response may select a tenant route.
     let authenticated_tenant = context.tenant_id.as_deref().ok_or("tenant_missing")?;
     let route = config
