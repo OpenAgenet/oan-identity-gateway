@@ -13,6 +13,7 @@ use crate::{
     verify_verified_delegation,
 };
 use base64::Engine;
+use futures_util::StreamExt;
 use serde_json::Value;
 use sha2::Digest;
 use std::{collections::HashMap, sync::Arc};
@@ -197,7 +198,22 @@ async fn handle(
         .and_then(|v| v.to_str().ok())
         .unwrap_or("application/octet-stream")
         .to_owned();
-    let bytes = response.bytes().await.map_err(|_| "backend_read_failed")?;
+    let is_stream = content_type.starts_with("text/event-stream");
+    let mut bytes = Vec::new();
+    let mut stream = response.bytes_stream();
+    if is_stream {
+        socket.write_all(format!("HTTP/1.1 {}\r\nTransfer-Encoding: chunked\r\nContent-Type: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n", status.as_u16(), content_type).as_bytes()).await.map_err(|_| "response_write_failed")?;
+    }
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|_| "backend_read_failed")?;
+        if bytes.len() + chunk.len() > MAX_REQUEST * 4 {
+            return Err("response_too_large".into());
+        }
+        bytes.extend_from_slice(&chunk);
+        if is_stream && !chunk.is_empty() {
+            write_chunk(socket, &chunk).await?;
+        }
+    }
     let response_digest = format!("sha256:{:x}", sha2::Sha256::digest(&bytes));
     let response_intent = response_signing_intent(&verified, status.as_u16(), &response_digest);
     let signed_response = connector
@@ -206,6 +222,22 @@ async fn handle(
         .map_err(|_| "response_signing_failed")?;
     let encoded_response = base64::engine::general_purpose::URL_SAFE_NO_PAD
         .encode(serde_json::to_vec(&signed_response).map_err(|_| "response_signing_failed")?);
+    if is_stream {
+        write_chunk(
+            socket,
+            format!(
+                "\nevent: oan-response-proof\ndata: {}\n\n",
+                encoded_response
+            )
+            .as_bytes(),
+        )
+        .await?;
+        socket
+            .write_all(b"0\r\n\r\n")
+            .await
+            .map_err(|_| "response_write_failed")?;
+        return Ok(());
+    }
     let head = format!("HTTP/1.1 {}\r\nContent-Length: {}\r\nContent-Type: {}\r\nX-OAN-Response-Envelope: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n", status.as_u16(), bytes.len(), content_type, encoded_response);
     socket
         .write_all(head.as_bytes())
@@ -216,6 +248,21 @@ async fn handle(
         .await
         .map_err(|_| "response_write_failed")?;
     Ok(())
+}
+
+async fn write_chunk(socket: &mut tokio::net::TcpStream, bytes: &[u8]) -> Result<(), String> {
+    socket
+        .write_all(format!("{:x}\r\n", bytes.len()).as_bytes())
+        .await
+        .map_err(|_| "response_write_failed")?;
+    socket
+        .write_all(bytes)
+        .await
+        .map_err(|_| "response_write_failed")?;
+    socket
+        .write_all(b"\r\n")
+        .await
+        .map_err(|_| "response_write_failed".to_string())
 }
 
 async fn read_request(
