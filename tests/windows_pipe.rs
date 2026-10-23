@@ -56,7 +56,7 @@ async fn gateway_transport_rejects_wrong_runtime_process_before_sending_frame() 
 }
 
 #[tokio::test]
-#[ignore = "requires sibling oan-identity-runtime build and Node 22; run explicitly for cross-language IPC acceptance"]
+#[ignore = "requires sibling oan-identity-runtime build and Node >=22.13; run explicitly for cross-language IPC acceptance"]
 async fn gateway_connects_to_actual_node_runtime_pipe() {
     let script = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../oan-identity-runtime/test-cases/windows-ipc-host.mjs");
