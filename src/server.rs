@@ -52,8 +52,20 @@ pub async fn serve(config: Config) -> Result<(), String> {
         let caller_id = caller_id.clone();
         let backend_token = backend_token.clone();
         tokio::spawn(async move {
-            if let Err(code) = handle(&mut socket, cfg, bearer, caller_id, backend_token).await {
-                let _ = write_error(&mut socket, 502, &code).await;
+            let mut response_started = false;
+            if let Err(code) = handle(
+                &mut socket,
+                cfg,
+                bearer,
+                caller_id,
+                backend_token,
+                &mut response_started,
+            )
+            .await
+            {
+                if !response_started {
+                    let _ = write_error(&mut socket, 502, &code).await;
+                }
             }
         });
     }
@@ -65,6 +77,7 @@ async fn handle(
     bearer: String,
     caller_id: String,
     backend_token: String,
+    response_started: &mut bool,
 ) -> Result<(), String> {
     let (method, target, headers, body) = read_request(socket).await?;
     let encoded = headers
@@ -76,6 +89,16 @@ async fn handle(
             .map_err(|_| "invalid_oan_envelope")?,
     )
     .map_err(|_| "invalid_oan_envelope")?;
+    // Compare the signed HTTP context before dispatch; Runtime subsequently
+    // verifies the signature covering this payload. Legacy unbound profiles
+    // remain compatible; the reference host requires the new binding.
+    if let Some(binding) = envelope.pointer("/message/payload/httpBinding") {
+        let expected = serde_json::json!({"method": method, "target": target,
+            "mcpSessionId": headers.get("mcp-session-id").map(String::as_str).unwrap_or("")});
+        if binding != &expected {
+            return Err("http_request_binding_mismatch".into());
+        }
+    }
     let request_id = headers
         .get("x-oan-request-id")
         .ok_or("missing_oan_request_id")?
@@ -202,6 +225,7 @@ async fn handle(
     let mut bytes = Vec::new();
     let mut stream = response.bytes_stream();
     if is_stream {
+        *response_started = true;
         socket.write_all(format!("HTTP/1.1 {}\r\nTransfer-Encoding: chunked\r\nContent-Type: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n", status.as_u16(), content_type).as_bytes()).await.map_err(|_| "response_write_failed")?;
     }
     while let Some(chunk) = stream.next().await {

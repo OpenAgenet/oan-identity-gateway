@@ -69,3 +69,18 @@ Community Skill identity verification does not require this component. It uses t
 ## Integration test cases
 
 See [test-cases/README.md](test-cases/README.md) for the lab-based scenario matrix, executable cases, run commands and explicit blocked end-to-end gates. Test identities are reused from `oan-agent-integration-lab`; no identity keys are copied into this repository.
+
+## Native protocol integration boundary
+
+The protected HTTP reference has been exercised in a Windows-to-Ubuntu
+A2A-to-MCP two-hop deployment with real Runtime IPC. This component forwards
+native protocol bodies and asks Runtime to verify/sign; it does not own resource
+keys, registration workflows or business handlers. Configure private backends
+with a distinct credential and bind native task/session ownership to the
+Runtime-verified peer DID. Public ingress deployment and additional protocols
+retain their own acceptance requirements.
+
+Signed SSE responses are forwarded incrementally with an OAN terminal proof.
+Protocol clients can install Runtime `createVerifiedHttpFetch` to validate and
+remove that proof without modifying their SDK. Interrupted streams never receive
+a second HTTP response or an automatic business retry.
