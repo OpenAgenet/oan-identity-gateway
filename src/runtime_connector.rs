@@ -345,8 +345,22 @@ impl<T: RuntimeIpcTransport> AuthenticatedRuntimeConnector<T> {
             return Err("ipc_frame_too_large".into());
         }
         let raw = self.transport.round_trip(frame).await?;
-        let response: IpcSignedResult =
-            serde_json::from_slice(&raw).map_err(|_| "ipc_schema_invalid")?;
+        let response: IpcSignedResult = match serde_json::from_slice(&raw) {
+            Ok(value) => value,
+            Err(_) => {
+                // Preserve the Runtime's bounded error code instead of
+                // collapsing an application-level signing rejection into a
+                // misleading schema error. The response contains no secret
+                // material; it is still treated as untrusted input.
+                if let Ok(error) = serde_json::from_slice::<Value>(&raw) {
+                    if let Some(code) = error.get("code").and_then(Value::as_str) {
+                        return Err(code.to_owned());
+                    }
+                }
+                eprintln!("Runtime sign IPC returned invalid response ({} bytes)", raw.len());
+                return Err("ipc_schema_invalid".into());
+            }
+        };
         if response.version != IPC_VERSION
             || response.caller_id != self.caller_id
             || response.tenant_id != self.tenant_id

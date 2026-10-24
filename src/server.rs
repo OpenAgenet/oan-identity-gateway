@@ -285,6 +285,15 @@ async fn handle(
             return Ok(());
         }
 
+        // A caller-owned egress Gateway is configured as a proof-preserving
+        // relay and has no signing authority. If the receiver failed to
+        // produce a terminal proof, fail closed instead of trying to sign the
+        // response locally (which would both misrepresent the signer and
+        // surface a misleading IPC schema error).
+        if config.outbound_passthrough {
+            return Err("response_proof_missing".into());
+        }
+
         // The response was buffered above, so sign this exact body rather
         // than trying to consume the reqwest stream a second time.
         let response_digest = format!("sha256:{:x}", sha2::Sha256::digest(&bytes));
