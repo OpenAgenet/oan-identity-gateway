@@ -84,3 +84,9 @@ Signed SSE responses are forwarded incrementally with an OAN terminal proof.
 Protocol clients can install Runtime `createVerifiedHttpFetch` to validate and
 remove that proof without modifying their SDK. Interrupted streams never receive
 a second HTTP response or an automatic business retry.
+
+Backend requests use a 30-second budget by default. Configure
+`backendTimeoutSecs` (1–300) for longer multi-agent workflows; callers must set
+compatible outer deadlines. Only connection establishment failures are retried.
+Timeouts and HTTP error responses are never retried because business execution
+may already have started.

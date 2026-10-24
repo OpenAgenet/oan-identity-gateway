@@ -191,7 +191,7 @@ async fn handle(
     destination.set_query(url.query());
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
-        .timeout(Duration::from_secs(30))
+        .timeout(Duration::from_secs(config.backend_timeout_secs))
         .build()
         .map_err(|_| "backend_client_init_failed")?;
     let mut request = client
@@ -244,7 +244,7 @@ async fn handle(
                 response = Some(value);
                 break;
             }
-            Err(error) if attempt < 19 => {
+            Err(error) if error.is_connect() && attempt < 19 => {
                 eprintln!("gateway backend connect retry {}: {}", attempt + 1, error);
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }

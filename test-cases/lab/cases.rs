@@ -35,6 +35,7 @@ fn gw_01_current_gateway_rejects_actual_http_lab_destinations() {
             allow_loopback_http: false,
             forward_verified_envelope: false,
             outbound_passthrough: false,
+            backend_timeout_secs: 30,
             routes: vec![TenantRoute {
                 tenant_id: name.into(),
                 resource_did: actor["did"].as_str().unwrap().into(),
@@ -62,6 +63,7 @@ fn https_config() -> Config {
         allow_loopback_http: false,
         forward_verified_envelope: false,
         outbound_passthrough: false,
+        backend_timeout_secs: 30,
         routes: resource_names()
             .into_iter()
             .enumerate()

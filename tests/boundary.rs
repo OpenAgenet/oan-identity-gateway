@@ -190,3 +190,17 @@ fn passthrough_requires_a_receiver_terminal_proof() {
         b"event: oan-response-proof\r\ndata: proof\r\n\r\n"
     ));
 }
+
+#[test]
+fn backend_budget_preserves_default_and_rejects_unbounded_values() {
+    let mut config: Config = serde_json::from_str(include_str!("../examples/config.json")).unwrap();
+    assert_eq!(config.backend_timeout_secs, 30);
+    for value in [1, 120, 300] {
+        config.backend_timeout_secs = value;
+        assert!(config.validate().is_ok());
+    }
+    for value in [0, 301, u64::MAX] {
+        config.backend_timeout_secs = value;
+        assert!(config.validate().is_err());
+    }
+}

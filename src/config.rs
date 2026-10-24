@@ -41,9 +41,18 @@ pub struct Config {
     /// retains ownership of the end-to-end response proof.
     #[serde(default)]
     pub outbound_passthrough: bool,
+    /// Bounded backend budget for multi-hop workflows; existing default is 30s.
+    #[serde(default = "default_backend_timeout")]
+    pub backend_timeout_secs: u64,
+}
+fn default_backend_timeout() -> u64 {
+    30
 }
 impl Config {
     pub fn validate(&self) -> Result<(), GatewayError> {
+        if !(1..=300).contains(&self.backend_timeout_secs) {
+            return Err(GatewayError::InvalidConfig);
+        }
         if self.outbound_passthrough && !self.forward_verified_envelope {
             return Err(GatewayError::InvalidConfig);
         }
