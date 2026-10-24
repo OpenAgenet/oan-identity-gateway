@@ -69,6 +69,7 @@ pub async fn serve(config: Config) -> Result<(), String> {
             )
             .await
             {
+                eprintln!("gateway request failed: {code}");
                 if !response_started {
                     let _ = write_error(&mut socket, 502, &code).await;
                 }
