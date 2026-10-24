@@ -241,6 +241,19 @@ async fn handle(
             .await
         {
             Ok(value) => {
+                // A freshly restarted downstream may accept the TCP connection
+                // before its protocol worker is ready.  Its temporary 502 has
+                // no receiver-owned response proof.  Retry this narrow shape
+                // only for a bounded window; proof-bearing responses and all
+                // other HTTP statuses are returned immediately.
+                if value.status() == reqwest::StatusCode::BAD_GATEWAY
+                    && !value.headers().contains_key("x-oan-response-envelope")
+                    && attempt < 19
+                {
+                    eprintln!("gateway proofless 502 retry {}", attempt + 1);
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    continue;
+                }
                 response = Some(value);
                 break;
             }
