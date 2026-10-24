@@ -227,6 +227,7 @@ async fn handle(
     }
     let response = request.send().await.map_err(|_| "backend_unavailable")?;
     let status = response.status();
+    eprintln!("gateway upstream response status={} content_type={} proof_header={}", status.as_u16(), response.headers().get(reqwest::header::CONTENT_TYPE).and_then(|v| v.to_str().ok()).unwrap_or(""), response.headers().contains_key("x-oan-response-envelope"));
     if config.outbound_passthrough {
         // Egress cannot replace the receiver's identity proof with its own.
         // Preserve the bounded wire body (including terminal SSE proof) and
