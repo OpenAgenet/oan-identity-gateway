@@ -3,6 +3,7 @@
 // Initial author: JINLIANG XU
 // Email: jlxufly@gmail.com
 
+use oan_identity_gateway::server::has_terminal_response_proof;
 use oan_identity_gateway::{
     config::Config,
     envelope::{response_signing_intent, VerifiedProxyEnvelope},
@@ -175,4 +176,14 @@ fn outbound_gateway_requires_end_to_end_envelope_forwarding() {
     assert!(config.validate().is_err());
     config.forward_verified_envelope = true;
     config.validate().unwrap();
+}
+
+#[test]
+fn passthrough_requires_a_receiver_terminal_proof() {
+    assert!(!has_terminal_response_proof(
+        br#"{"jsonrpc":"2.0","result":{}}"#
+    ));
+    assert!(has_terminal_response_proof(
+        b"event: message\ndata: {}\n\nevent: oan-response-proof\ndata: proof\n\n"
+    ));
 }

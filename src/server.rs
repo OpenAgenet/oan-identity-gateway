@@ -26,6 +26,12 @@ use tokio::{
 const MAX_REQUEST: usize = 256 * 1024;
 const IO_TIMEOUT: Duration = Duration::from_secs(15);
 
+pub fn has_terminal_response_proof(bytes: &[u8]) -> bool {
+    bytes
+        .windows(b"\nevent: oan-response-proof\ndata: ".len())
+        .any(|window| window == b"\nevent: oan-response-proof\ndata: ")
+}
+
 pub async fn serve(config: Config) -> Result<(), String> {
     config.validate().map_err(|e| e.to_string())?;
     let bind = config.ingress_bind.clone().ok_or("ingress_bind_required")?;
@@ -225,12 +231,22 @@ async fn handle(
         // Egress cannot replace the receiver's identity proof with its own.
         // Preserve the bounded wire body (including terminal SSE proof) and
         // only the protocol/response-proof headers needed by the native client.
-        let mut head = format!("HTTP/1.1 {}\r\n", status.as_u16());
-        for name in ["content-type", "mcp-session-id", "x-oan-response-envelope"] {
-            if let Some(value) = response.headers().get(name).and_then(|v| v.to_str().ok()) {
-                head.push_str(&format!("{name}: {value}\r\n"));
-            }
-        }
+        let content_type = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("application/octet-stream")
+            .to_owned();
+        let receiver_proof = response
+            .headers()
+            .get("x-oan-response-envelope")
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_owned);
+        let response_session = response
+            .headers()
+            .get("mcp-session-id")
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_owned);
         let mut bytes = Vec::new();
         let mut stream = response.bytes_stream();
         while let Some(chunk) = stream.next().await {
@@ -240,10 +256,79 @@ async fn handle(
             }
             bytes.extend_from_slice(&chunk);
         }
-        head.push_str(&format!(
-            "Content-Length: {}\r\nConnection: close\r\n\r\n",
-            bytes.len()
-        ));
+        // Passthrough is safe only when the downstream has already produced
+        // a terminal proof.  A native A2A backend has no Sidecar proof, so it
+        // must fall through and receive a Gateway-owned proof instead of
+        // silently returning an unverifiable response.
+        let stream_proof = has_terminal_response_proof(&bytes);
+        if receiver_proof.is_some() || stream_proof {
+            let mut head = format!("HTTP/1.1 {}\r\n", status.as_u16());
+            head.push_str(&format!("Content-Type: {content_type}\r\n"));
+            if let Some(value) = response_session.as_deref() {
+                head.push_str(&format!("Mcp-Session-Id: {value}\r\n"));
+            }
+            if let Some(value) = receiver_proof {
+                head.push_str(&format!("X-OAN-Response-Envelope: {value}\r\n"));
+            }
+            head.push_str(&format!(
+                "Content-Length: {}\r\nConnection: close\r\n\r\n",
+                bytes.len()
+            ));
+            socket
+                .write_all(head.as_bytes())
+                .await
+                .map_err(|_| "response_write_failed")?;
+            socket
+                .write_all(&bytes)
+                .await
+                .map_err(|_| "response_write_failed")?;
+            return Ok(());
+        }
+
+        // The response was buffered above, so sign this exact body rather
+        // than trying to consume the reqwest stream a second time.
+        let response_digest = format!("sha256:{:x}", sha2::Sha256::digest(&bytes));
+        let response_intent = response_signing_intent(&verified, status.as_u16(), &response_digest);
+        let signed_response = connector
+            .sign_authenticated(&response_intent)
+            .await
+            .map_err(|_| "response_signing_failed")?;
+        let encoded_response = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(serde_json::to_vec(&signed_response).map_err(|_| "response_signing_failed")?);
+        let session_header = response_session
+            .as_deref()
+            .or_else(|| headers.get("mcp-session-id").map(String::as_str))
+            .map(|v| format!("Mcp-Session-Id: {v}\r\n"))
+            .unwrap_or_default();
+        let is_stream = content_type.starts_with("text/event-stream");
+        if is_stream {
+            *response_started = true;
+            socket
+                .write_all(format!("HTTP/1.1 {}\r\nTransfer-Encoding: chunked\r\nContent-Type: {}\r\n{}Cache-Control: no-store\r\nConnection: close\r\n\r\n", status.as_u16(), content_type, session_header).as_bytes())
+                .await
+                .map_err(|_| "response_write_failed")?;
+            write_chunk(socket, &bytes).await?;
+            write_chunk(
+                socket,
+                format!(
+                    "\nevent: oan-response-proof\ndata: {}\n\n",
+                    encoded_response
+                )
+                .as_bytes(),
+            )
+            .await?;
+            socket
+                .write_all(b"0\r\n\r\n")
+                .await
+                .map_err(|_| "response_write_failed")?;
+            return Ok(());
+        }
+        let session_header = response_session
+            .as_deref()
+            .or_else(|| headers.get("mcp-session-id").map(String::as_str))
+            .map(|v| format!("Mcp-Session-Id: {v}\r\n"))
+            .unwrap_or_default();
+        let head = format!("HTTP/1.1 {}\r\nContent-Length: {}\r\nContent-Type: {}\r\n{}X-OAN-Response-Envelope: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n", status.as_u16(), bytes.len(), content_type, session_header, encoded_response);
         socket
             .write_all(head.as_bytes())
             .await
