@@ -28,8 +28,11 @@ const IO_TIMEOUT: Duration = Duration::from_secs(15);
 
 pub fn has_terminal_response_proof(bytes: &[u8]) -> bool {
     bytes
-        .windows(b"\nevent: oan-response-proof\ndata: ".len())
-        .any(|window| window == b"\nevent: oan-response-proof\ndata: ")
+        .windows(b"event: oan-response-proof\ndata: ".len())
+        .any(|window| window == b"event: oan-response-proof\ndata: ")
+        || bytes
+            .windows(b"event: oan-response-proof\r\ndata: ".len())
+            .any(|window| window == b"event: oan-response-proof\r\ndata: ")
 }
 
 pub async fn serve(config: Config) -> Result<(), String> {
@@ -226,9 +229,40 @@ async fn handle(
             request = request.header(name, value);
         }
     }
-    let response = request.send().await.map_err(|_| "backend_unavailable")?;
+    // The receiver ingress may still be binding during a fresh scenario run.
+    // Retry only connection failures for a bounded window; HTTP responses,
+    // including proof-less 5xx responses, are never retried here.
+    let mut response = None;
+    for attempt in 0..20 {
+        match request
+            .try_clone()
+            .ok_or("backend_request_clone_failed")?
+            .send()
+            .await
+        {
+            Ok(value) => {
+                response = Some(value);
+                break;
+            }
+            Err(error) if attempt < 19 => {
+                eprintln!("gateway backend connect retry {}: {}", attempt + 1, error);
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+            Err(_) => break,
+        }
+    }
+    let response = response.ok_or("backend_unavailable")?;
     let status = response.status();
-    eprintln!("gateway upstream response status={} content_type={} proof_header={}", status.as_u16(), response.headers().get(reqwest::header::CONTENT_TYPE).and_then(|v| v.to_str().ok()).unwrap_or(""), response.headers().contains_key("x-oan-response-envelope"));
+    eprintln!(
+        "gateway upstream response status={} content_type={} proof_header={}",
+        status.as_u16(),
+        response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or(""),
+        response.headers().contains_key("x-oan-response-envelope")
+    );
     if config.outbound_passthrough {
         // Egress cannot replace the receiver's identity proof with its own.
         // Preserve the bounded wire body (including terminal SSE proof) and
@@ -303,7 +337,10 @@ async fn handle(
         let signed_response = connector
             .sign_authenticated(&response_intent)
             .await
-            .map_err(|error| { eprintln!("gateway response signing failed: {error}"); "response_signing_failed" })?;
+            .map_err(|error| {
+                eprintln!("gateway response signing failed: {error}");
+                "response_signing_failed"
+            })?;
         let encoded_response = base64::engine::general_purpose::URL_SAFE_NO_PAD
             .encode(serde_json::to_vec(&signed_response).map_err(|_| "response_signing_failed")?);
         let session_header = response_session
@@ -363,31 +400,66 @@ async fn handle(
         .and_then(|v| v.to_str().ok())
         .map(|v| format!("Mcp-Session-Id: {v}\r\n"))
         .unwrap_or_default();
+    let receiver_proof = response
+        .headers()
+        .get("x-oan-response-envelope")
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_owned);
     let mut bytes = Vec::new();
     let mut stream = response.bytes_stream();
-    if is_stream {
-        *response_started = true;
-        socket.write_all(format!("HTTP/1.1 {}\r\nTransfer-Encoding: chunked\r\nContent-Type: {}\r\n{}Cache-Control: no-store\r\nConnection: close\r\n\r\n", status.as_u16(), content_type, session_header).as_bytes()).await.map_err(|_| "response_write_failed")?;
-    }
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(|_| "backend_read_failed")?;
         if bytes.len() + chunk.len() > MAX_REQUEST * 4 {
             return Err("response_too_large".into());
         }
         bytes.extend_from_slice(&chunk);
-        if is_stream && !chunk.is_empty() {
-            write_chunk(socket, &chunk).await?;
+    }
+    // A Sidecar may already have produced the terminal proof for this exact
+    // response. Preserve it through the Gateway so an MCP caller can verify
+    // the second-hop `sidecar-response` proof. Only sign below when the
+    // downstream response is genuinely unsigned (for example a native A2A
+    // backend), in which case the Gateway is the authorized fallback signer.
+    let stream_proof = has_terminal_response_proof(&bytes);
+    if receiver_proof.is_some() || stream_proof {
+        *response_started = true;
+        if is_stream {
+            socket.write_all(format!("HTTP/1.1 {}\r\nTransfer-Encoding: chunked\r\nContent-Type: {}\r\n{}Cache-Control: no-store\r\nConnection: close\r\n\r\n", status.as_u16(), content_type, session_header).as_bytes()).await.map_err(|_| "response_write_failed")?;
+            write_chunk(socket, &bytes).await?;
+            socket
+                .write_all(b"0\r\n\r\n")
+                .await
+                .map_err(|_| "response_write_failed")?;
+            return Ok(());
         }
+        let proof_header = receiver_proof
+            .map(|value| format!("X-OAN-Response-Envelope: {value}\r\n"))
+            .unwrap_or_default();
+        let head = format!("HTTP/1.1 {}\r\nContent-Length: {}\r\nContent-Type: {}\r\n{}{}Cache-Control: no-store\r\nConnection: close\r\n\r\n", status.as_u16(), bytes.len(), content_type, session_header, proof_header);
+        socket
+            .write_all(head.as_bytes())
+            .await
+            .map_err(|_| "response_write_failed")?;
+        socket
+            .write_all(&bytes)
+            .await
+            .map_err(|_| "response_write_failed")?;
+        return Ok(());
     }
     let response_digest = format!("sha256:{:x}", sha2::Sha256::digest(&bytes));
     let response_intent = response_signing_intent(&verified, status.as_u16(), &response_digest);
     let signed_response = connector
         .sign_authenticated(&response_intent)
         .await
-        .map_err(|error| { eprintln!("gateway response signing failed: {error}"); "response_signing_failed" })?;
+        .map_err(|error| {
+            eprintln!("gateway response signing failed: {error}");
+            "response_signing_failed"
+        })?;
     let encoded_response = base64::engine::general_purpose::URL_SAFE_NO_PAD
         .encode(serde_json::to_vec(&signed_response).map_err(|_| "response_signing_failed")?);
     if is_stream {
+        *response_started = true;
+        socket.write_all(format!("HTTP/1.1 {}\r\nTransfer-Encoding: chunked\r\nContent-Type: {}\r\n{}Cache-Control: no-store\r\nConnection: close\r\n\r\n", status.as_u16(), content_type, session_header).as_bytes()).await.map_err(|_| "response_write_failed")?;
+        write_chunk(socket, &bytes).await?;
         write_chunk(
             socket,
             format!(

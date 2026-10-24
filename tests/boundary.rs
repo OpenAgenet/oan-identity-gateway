@@ -186,4 +186,7 @@ fn passthrough_requires_a_receiver_terminal_proof() {
     assert!(has_terminal_response_proof(
         b"event: message\ndata: {}\n\nevent: oan-response-proof\ndata: proof\n\n"
     ));
+    assert!(has_terminal_response_proof(
+        b"event: oan-response-proof\r\ndata: proof\r\n\r\n"
+    ));
 }
