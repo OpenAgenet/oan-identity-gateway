@@ -36,7 +36,7 @@ pub fn has_terminal_response_proof(bytes: &[u8]) -> bool {
 }
 
 pub async fn serve(config: Config) -> Result<(), String> {
-    config.validate().map_err(|e| e.to_string())?;
+    config.validate_serving().map_err(|e| e.to_string())?;
     let bind = config.ingress_bind.clone().ok_or("ingress_bind_required")?;
     let bearer = config
         .runtime_bearer

@@ -10,7 +10,8 @@ fn main() {
         Some("capabilities") => {
             println!("{}", serde_json::to_string_pretty(&capabilities()).unwrap())
         }
-        Some("check-config") => {
+        Some("check-config") | Some("check-serving-config") => {
+            let serving = std::env::args().nth(1).as_deref() == Some("check-serving-config");
             let result = args
                 .next()
                 .ok_or_else(|| "missing_config_path".to_string())
@@ -21,7 +22,9 @@ fn main() {
                     serde_json::from_str::<Config>(&text)
                         .map_err(|_| "invalid_config_json".to_string())
                 })
-                .and_then(|config| config.validate().map_err(|e| e.to_string()));
+                .and_then(|config| {
+                    if serving { config.validate_serving() } else { config.validate() }.map_err(|e| e.to_string())
+                });
             match result {
                 Ok(()) => println!("config_valid"),
                 Err(code) => {
@@ -53,6 +56,6 @@ fn main() {
                 std::process::exit(2);
             }
         }
-        _ => println!("Usage: oan-identity-gateway capabilities | check-config <path>"),
+        _ => println!("Usage: oan-identity-gateway capabilities | check-config <path> | check-serving-config <path>"),
     }
 }

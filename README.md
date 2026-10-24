@@ -12,7 +12,7 @@ An OAN identity gateway for enterprise, multi-tenant, private-network, and remot
 
 ## Scope
 
-The Gateway will be implemented as real deployment needs emerge and will cover:
+The deployment scope includes implemented protected HTTP routing and optional future extensions; the list below is not a claim that every transport is implemented:
 
 - public/private forwarding for private-network agents, MCP servers, and services;
 - tenant isolation, delegated identities, and audit records;
@@ -50,7 +50,7 @@ does not accept a peer-supplied identity or signing key. Configure the Runtime
 listener with owner-only pipe access, set `runtimeOwnerPid` to its actual process
 ID, and keep the bearer in trusted process
 configuration. The Windows pipe round-trip is covered by a native test; complete
-cross-host A2A/MCP business composition remains an integration task.
+cross-host A2A/MCP business composition has also been exercised by the end-to-end demos. Additional topologies retain their own integration checks.
 
 For a Windows cross-language IPC check, build the sibling Runtime with
 `npm --prefix ../oan-identity-runtime run build`, then run
@@ -90,3 +90,32 @@ Backend requests use a 30-second budget by default. Configure
 compatible outer deadlines. Only connection establishment failures are retried.
 Timeouts and HTTP error responses are never retried because business execution
 may already have started.
+
+## Independent adoption and preflight
+
+Use this component only when an external protected boundary is needed. L0
+registration/discovery and independent Skill-based mutual verification do not
+require it. Embedded Runtime adapters are an alternative; a full Runtime +
+Sidecar + Gateway deployment is not mandatory.
+
+`oan-identity-gateway check-serving-config <path>` checks the local serving prerequisites
+(ingress, authenticated Runtime IPC, caller and backend credential), without
+opening ports, starting business processes or cleaning existing deployments.
+`check-config` remains the structural configuration check. Neither check proves
+Runtime reachability, private-backend isolation or end-to-end authentication.
+Validate those in the actual deployment before enabling a protected route.
+
+The operator owns trust pins, tenants, routing, TLS termination, service
+management and backend isolation. No scenario graph, demo run identifier, fixed
+port, SSH account, worker UID or demo launcher is required. Keep business ACLs
+and task orchestration in the application. Long-term keys remain in Runtime's
+configured Key Provider. A loopback address alone is not backend isolation:
+restrict backend access and require its independently managed credential.
+
+The tested cross-host reference demonstrates a supported composition, rather
+than requiring every deployment to reproduce that topology. Native protocol
+versions and synchronous/stream/cancel/callback profiles require explicit
+support and verification; HTTP forwarding alone does not promise every native
+operation is protected. The bounded Runtime fetch client releases SSE data only
+after terminal proof verification, even when the proxy forwards provisional
+chunks incrementally.

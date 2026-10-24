@@ -49,6 +49,23 @@ fn default_backend_timeout() -> u64 {
     30
 }
 impl Config {
+    /// Serving preflight checks local configuration only, never starts or
+    /// cleans business processes. OS isolation remains deployment-owned.
+    pub fn validate_serving(&self) -> Result<(), GatewayError> {
+        self.validate()?;
+        if self.routes.is_empty()
+            || self.ingress_bind.is_none()
+            || self.runtime_bearer.is_none()
+            || self.backend_auth_token.is_none()
+            || self
+                .caller_id
+                .as_ref()
+                .is_none_or(|value| value.trim().is_empty())
+        {
+            return Err(GatewayError::InvalidConfig);
+        }
+        Ok(())
+    }
     pub fn validate(&self) -> Result<(), GatewayError> {
         if !(1..=300).contains(&self.backend_timeout_secs) {
             return Err(GatewayError::InvalidConfig);
